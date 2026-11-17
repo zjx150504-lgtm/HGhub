@@ -53,10 +53,13 @@ export type Detail = {
 export type PlayInfo = {
   id: number;
   ep_num: number;
-  duration: number;
-  title: string;
   video_url: string;
   video_url_hevc?: string;
+};
+
+export type PostPlayInfo = {
+  id: number;
+  videos: { index: number; url: string }[];
 };
 
 export type RankItem = {

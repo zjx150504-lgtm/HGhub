@@ -93,12 +93,12 @@ pub async fn edge(
                 return Err("401".to_string());
             }
             if !status.is_success() {
-                return Err(format!("HTTP {status}: {}", &text[..text.len().min(160)]));
+                return Err(format_http_error(status.as_u16(), &text));
             }
             if text.trim().is_empty() {
                 return Ok(Value::Null);
             }
-            serde_json::from_str::<Value>(&text).map_err(|e| format!("{e}: {}", &text[..text.len().min(160)]))
+            serde_json::from_str::<Value>(&text).map_err(|e| format!("{e}: {}", text.chars().take(160).collect::<String>()))
         }
     })
     .await?;
@@ -116,6 +116,30 @@ pub async fn edge(
             .filter(|s| !s.is_empty())
             .unwrap_or("接口返回失败")
             .to_string())
+    }
+}
+
+fn format_http_error(status: u16, text: &str) -> String {
+    let message = serde_json::from_str::<Value>(text).ok()
+        .and_then(|value| value.get("msg").and_then(Value::as_str).map(str::to_owned))
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or_else(|| text.chars().take(160).collect());
+    format!("HTTP {status}: {message}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_http_error;
+
+    #[test]
+    fn preserves_upstream_message_for_removed_content() {
+        assert_eq!(format_http_error(410, r#"{"status":0,"msg":"内容已下线"}"#), "HTTP 410: 内容已下线");
+    }
+
+    #[test]
+    fn truncates_non_json_errors_without_splitting_unicode() {
+        let message = "错误".repeat(100);
+        assert_eq!(format_http_error(502, &message).chars().count(), "HTTP 502: ".len() + 160);
     }
 }
 

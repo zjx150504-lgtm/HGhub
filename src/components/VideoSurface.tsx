@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, forwardRef, useState } from "react";
 import Hls from "hls.js";
-import { playlist } from "../api";
+import { mediaUrl } from "../api";
 
 export type VideoHandle = {
   el: () => HTMLVideoElement | null;
@@ -67,7 +67,7 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
 
     const proxied = /^https?:\/\/hg\.localhost\//.test(src);
-    const url = proxied ? src : playlist(src);
+    const url = proxied ? src : mediaUrl(src);
     const useHls = !url.includes("/seg?u=");
 
     /* 换源时先把音量/倍速套回去：hls 重新 attach 后浏览器会把它们重置成默认值 */
@@ -145,6 +145,7 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
       onWaiting={() => onWaiting?.()}
       onPlaying={() => onPlaying?.()}
       onEnded={() => onEnded?.()}
+      onError={() => onError?.("视频加载失败，请重试")}
     />
   );
 });

@@ -13,10 +13,13 @@ export const CHANNELS = [
   { cate: "ai-mogai", name: "AI魔改", desc: "魔改名场面 · 脑洞大开" },
 ] as const;
 
+const isRemoved = (message: string | null | undefined) => /^HTTP 410\b/.test(message || "");
+
 /* ================= 分类总览 ================= */
 export default function Category({ wide }: { wide: boolean }) {
   const { push } = useStore();
   const [rows, setRows] = useState<Record<string, VideoCard[]>>({});
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -27,16 +30,17 @@ export default function Category({ wide }: { wide: boolean }) {
         CHANNELS.map(async (c) => {
           try {
             const res = await api.category(c.cate, 1, 8);
-            return [c.cate, res?.items || []] as const;
-          } catch {
-            return [c.cate, [] as VideoCard[]] as const;
+            return { cate: c.cate, items: res?.items || [], error: "" };
+          } catch (e) {
+            return { cate: c.cate, items: [] as VideoCard[], error: (e as Error).message || "加载失败" };
           }
         }),
       );
       let p: Post[] = [];
       try { p = (await api.posts(1, 8))?.items || []; } catch { p = []; }
       if (!alive) return;
-      setRows(Object.fromEntries(entries));
+      setRows(Object.fromEntries(entries.map((entry) => [entry.cate, entry.items])));
+      setRowErrors(Object.fromEntries(entries.map((entry) => [entry.cate, entry.error])));
       setPosts(p);
       setLoading(false);
     })();
@@ -85,7 +89,7 @@ export default function Category({ wide }: { wide: boolean }) {
                 {list.map((v) => (
                   <RowCard key={v.id} v={v} onOpen={() => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: c.name })} />
                 ))}
-                {!list.length && <div className="h-[150px] flex items-center text-[11.5px] text-dim px-1">{loading ? "加载中…" : "暂无内容"}</div>}
+                {!list.length && <div className="h-[150px] flex items-center text-[11.5px] text-dim px-1">{loading ? "加载中…" : isRemoved(rowErrors[c.cate]) ? "上游已下线，进入后可搜索相关内容" : rowErrors[c.cate] ? "加载失败，请进入后重试" : "暂无内容"}</div>}
               </div>
             </section>
           );
@@ -132,6 +136,8 @@ export default function Category({ wide }: { wide: boolean }) {
 /* ================= 频道详情页 ================= */
 export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: string; onBack: () => void; wide: boolean }) {
   const { push } = useStore();
+  const keyword = cate === "ai-huanlian" ? "换脸" : cate === "ai-mogai" ? "魔改" : "";
+  const [mode, setMode] = useState<"category" | "related">("category");
   const [sort, setSort] = useState<"最新" | "最热" | "高分">("最新");
   const [items, setItems] = useState<VideoCard[]>([]);
   const [page, setPage] = useState(0);
@@ -147,7 +153,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
     setLoading(true);
     try {
       const next = page + 1;
-      const res = await api.category(cate, next, 20);
+      const res = mode === "related" ? await api.search(keyword, next, 20) : await api.category(cate, next, 20);
       setItems((prev) => {
         const seen = new Set(prev.map((x) => x.id));
         return [...prev, ...(res?.items || []).filter((x) => !seen.has(x.id))];
@@ -163,7 +169,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
     }
   };
 
-  useEffect(() => { loadMore(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadMore(); /* eslint-disable-next-line */ }, [mode]);
   useEffect(() => {
     const el = sentinel.current;
     if (!el) return;
@@ -171,7 +177,11 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
     io.observe(el);
     return () => io.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pages]);
+  }, [page, pages, mode]);
+
+  const searchRelated = () => {
+    setItems([]); setPage(0); setPages(1); setErr(null); setMode("related");
+  };
 
   const sorted = [...items].sort((a, b) => {
     if (sort === "最热") return (b.hot || 0) - (a.hot || 0);
@@ -199,10 +209,17 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
         </div>
       </div>
       <div className="flex-1 scroll-y px-4 pt-3 pb-8">
+        {mode === "related" && <div className="mb-3 rounded-(--r-sm) bg-s2 px-3 py-2 text-[12px] text-mut">上游分类已下线，以下是“{keyword}”的搜索结果，内容由关键词匹配。</div>}
         {sorted.length ? (
-          <Masonry videos={sorted} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: sorted.map((x) => x.id), index: sorted.findIndex((x) => x.id === v.id), title: name })} />
+          <Masonry videos={sorted} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: sorted.map((x) => x.id), index: sorted.findIndex((x) => x.id === v.id), title: mode === "related" ? `搜索 · ${keyword}` : name })} />
         ) : err ? (
-          <Empty icon={<IGrid size={26} />} title="加载失败" sub={err} action="重试" onAction={loadMore} />
+          isRemoved(err) && keyword ? (
+            <Empty icon={<IGrid size={26} />} title="该分类已下线" sub="上游站点已关闭该分类，可以搜索关键词查找相关内容。" action="搜索相关内容" onAction={searchRelated} />
+          ) : (
+            <Empty icon={<IGrid size={26} />} title="加载失败" sub={err} action="重试" onAction={loadMore} />
+          )
+        ) : !loading && page > 0 ? (
+          <Empty icon={<IGrid size={26} />} title={mode === "related" ? "没有找到相关内容" : "暂无内容"} />
         ) : (
           <div className="flex justify-center py-10"><div className="w-8 h-8 spinner" /></div>
         )}

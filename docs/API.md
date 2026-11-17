@@ -141,6 +141,8 @@ POST /api/account/logout   (Bearer)
 | AI 魔改 | `/ai-mogai/` | `ai-mogai` |
 | 黄果吃瓜 | `/chigua/` | 走 `/api/posts`（见 §5） |
 
+2026-11-17 实测：换脸和魔改的官网分类页及分类 API 均返回 HTTP 410（内容已下线）。客户端可提示此状态并提供关键词搜索；搜索结果是相关内容，并非原分类列表。
+
 频道页另有 4 个标签：`latest`（最新更新，默认）、`hot`（当前热播）、`original`（独家原创）、`random`（随机推荐），
 HTML 对应 `/ai-duanju/hot/`、`/ai-duanju/original/`、`/ai-duanju/random/`。
 > 实测 JSON 列表接口不接受 `tab/sort`（返回值不变），需要完全一致时走 HTML 解析；一般场景用 JSON + 客户端排序。
@@ -235,7 +237,8 @@ HTML 版：`/search/?keyword=xxx`；分页 `/search/video/{关键词}/{页码}/`
 
 ```
 GET /api/posts?page=1&size=20     // 列表
-GET /api/posts/{id}               // 详情（含 video_url）
+GET /api/posts/{id}               // 图文详情
+POST /api/posts/{id}/playback     // 请求体 {}，获取帖子视频地址
 ```
 
 列表项：
@@ -246,7 +249,7 @@ GET /api/posts/{id}               // 详情（含 video_url）
   "created_at": "2026-08-13 17:08:00", "publish_time": "2026-08-14 01:07:59" }
 ```
 
-详情 `data` 字段：`author, content, counts, cover, created_at, desc, id, interaction, publish_time, tag_links, tags, title, video_api, video_iv, video_key, video_url`。
+详情提供图文和作者等信息，旧的 `video_url` 可能为空。播放接口返回 `data.videos` 数组，元素为 `{index, url}`；纯图文帖返回空数组。
 
 ---
 
@@ -269,24 +272,26 @@ GET /api/videos/{id}
 | `counts` | `{collect,comment,hot,like}` |
 | `author` | `{id,name,followers,following,is_following,like_count}` |
 | `interaction` | `{collected,liked,liked_ep}`（登录后才有真实值） |
-| `video_url` | 第 1 集 m3u8（SSR 预置） |
-| `video_url_hevc` | H.265 版本（可能为空） |
+| `video_url` / `video_url_hevc` | 旧字段，可能为空；播放时使用下方的播放接口 |
 | `is_finished` / `is_original` / `video_type` | 状态位 |
 
 ### 6.2 取指定集播放地址
 
 ```
-GET /api/videos/{id}/play?ep={集号}&page_texts=0
+POST /api/videos/{id}/episodes/{集号}/playback
+Content-Type: application/json
+
+{}
 ```
 
 ```json
-{ "id": 10769, "ep_num": 3, "duration": 147,
-  "video_url": "https://yd-lphu-hls.hzjvlo.cn/.../index.m3u8?auth_key=...",
-  "video_url_hevc": "", "title": "...", "page_title": "...", ... }
+{ "id": 10769, "ep": 3, "manifest_method": "GET",
+  "streams": { "main": "https://example.com/.../index.m3u8?...", "hevc": "", "preview": "" },
+  "cdn": { "m3u8Enabled": true, "otherEnabled": false, "authKey": "...", "authValue": "...", "app": "..." } }
 ```
 
-- 无需登录；`video_url` 为 **HLS（m3u8）**，`auth_key` 带时效（约 1 小时），**播放前现取**，不要长期缓存。
-- 其余 `page_*` 为 SEO 字段，可忽略。
+- `streams.main` 是播放地址，地址带时效，**播放或重试时现取**，不要长期缓存。帖子播放接口同样接收空 JSON 请求体。
+- 旧的 `GET /api/videos/{id}/play?ep=...` 已不再返回可用的播放地址。
 
 ### 6.3 播放实现
 
@@ -341,7 +346,8 @@ reqwest + rustls，统一 UA/Referer/Accept，
 | 搜索 | `GET /api/search?q=` |
 | 吃瓜 | `GET /api/posts` |
 | 详情 + 集数 | `GET /api/videos/{id}` |
-| 播放地址 | `GET /api/videos/{id}/play?ep=` |
+| 播放地址 | `POST /api/videos/{id}/episodes/{ep}/playback`，body `{}` |
+| 帖子视频 | `POST /api/posts/{id}/playback`，body `{}` |
 | 评论列表 | `GET /api/videos/{id}/comments?ep=&page=&size=` |
 | 发评论 | `POST /api/videos/{id}/comments?ep=` body `{text}`（回复带 `reply_id`） |
 | 评论回复 | `GET /api/videos/{id}/comments/{cid}/replies?page=&size=` |
@@ -383,7 +389,7 @@ reqwest + rustls，统一 UA/Referer/Accept，
 2. 榜单忽略分页，固定 20 条。
 3. 搜索参数是 `q`。
 4. 分类 tab 参数对 JSON 无效。
-5. `auth_key` 会过期：播放前现取 `play`；图片 URL 失效时回落到列表里的新 URL。
+5. 播放地址会过期：播放或重试时现取 `playback`；图片 URL 失效时回落到列表里的新 URL。
 6. 站点偶发 TLS 握手失败（本地 DNS 假 IP / 代理导致），客户端必须重试。
 7. 未登录时 `interaction` 恒为 `{collected:false,liked:false}`，不要当真实状态渲染。
 8. 点赞、收藏、评论的 `ep` 必须放 **query**，放 body 不生效。
@@ -397,6 +403,7 @@ reqwest + rustls，统一 UA/Referer/Accept，
 | --- | --- | --- |
 | 列表 | `GET /api/posts?page=1&size=20` | 返回 `{items,pagination}`，字段 `id/title/cover/tags/hot/publish_time` |
 | 详情 | `GET /api/posts/{id}` | 见下方字段表 |
+| 视频地址 | `POST /api/posts/{id}/playback` | body `{}`，返回 `videos: [{index, url}]`，纯图文帖为空数组 |
 | 点赞 | `POST /api/posts/{id}/like` / `DELETE` | 需登录 |
 | 收藏 | `POST /api/posts/{id}/collect` / `DELETE` | 需登录 |
 | 评论列表 | `GET /api/posts/{id}/comments?page=1&size=20` | 返回 `{items,pagination}` |
@@ -409,7 +416,6 @@ reqwest + rustls，统一 UA/Referer/Accept，
   "title": "……",
   "cover": "https://pic.drleao.cn/...jpeg?auth_key=...",
   "content": "<p>正文 HTML，内含 <img> 图集</p>",   // 需要清洗后渲染，图片走本地代理
-  "video_url": "https://xxx/videos5/xxx/xxx.m3u8?auth_key=...",  // 部分帖子没有该字段
   "author": { "id": 156309, "name": "黄果吃瓜侠", "avatar": "...", "is_following": false },
   "counts": { "like": 240, "comment": 0, "collect": 110, "share": 0, "hot": 53348 },
   "interaction": { "liked": false, "collected": false },
@@ -420,5 +426,5 @@ reqwest + rustls，统一 UA/Referer/Accept，
 
 前端处理约定：
 
-- `video_url` 存在 → 直接进沉浸式播放页播放；
+- 从帖子播放接口获取 `videos`；有多个视频时可切换，纯图文帖不显示播放按钮；
 - `content` 非空 → 右侧栏常驻「图文」入口，正文经 `DOMParser` 清洗后渲染，`<img src>` 改写为 `hg://localhost/img?u=` 走本地代理（避免防盗链 403）。

@@ -256,7 +256,7 @@ export default function App() {
   return (
     <>
       {platform === "windows" ? <DesktopShell /> : <MobileShell />}
-      <LoginModal />
+      {platform !== "android" && <LoginModal />}
       <ToastHost />
       {/* 登录遮罩键盘处理占位 */}
       {loginOpen && <div className="hidden" onClick={() => setLoginOpen(false)} />}

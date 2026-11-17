@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, fmt } from "../api";
+import { api, fmt, platform } from "../api";
 import type { Comment, CommentPage, Episode } from "../types";
 import { useStore } from "../store";
 import { Avatar, Empty } from "./ui";
@@ -118,7 +118,7 @@ export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
         )) : loading ? (
           <div className="flex justify-center py-10"><div className="w-7 h-7 spinner" /></div>
         ) : (
-          <Empty icon={<IHeart size={22} />} title="还没有评论" sub="来抢第一个沙发" />
+          <Empty icon={<IHeart size={22} />} title="还没有评论" sub={platform === "android" ? "稍后再来看看" : "来抢第一个沙发"} />
         )}
         {items.length > 0 && (
           <div className="flex justify-center py-4">
@@ -130,7 +130,9 @@ export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
         )}
       </div>
 
-      <form className="shrink-0 flex items-center gap-2 px-3 py-2.5 bg-s2/70" onSubmit={(e) => { e.preventDefault(); send(); }}>
+      {platform === "android" ? (
+        <div className="shrink-0 px-4 py-3 text-center text-[11px] text-mut bg-s2/70">手机版可查看评论</div>
+      ) : <form className="shrink-0 flex items-center gap-2 px-3 py-2.5 bg-s2/70" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <Avatar size={30} name={user?.nickname || "我"} hue={322} />
         <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)}
           onFocus={() => { if (!user) setLoginOpen(true); }}
@@ -140,7 +142,7 @@ export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
           className={`w-9 h-9 rounded-full flex items-center justify-center pressable ${text.trim() ? "brand-grad glow-neon" : "bg-s3 text-dim"}`}>
           {sending ? <span className="w-4 h-4 spinner" /> : <ISendF size={16} />}
         </button>
-      </form>
+      </form>}
     </div>
   );
 }

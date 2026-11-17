@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, cover, fmt, platform } from "../api";
-import type { Post } from "../types";
+import type { Post, PostPlayInfo } from "../types";
 import { useStore } from "../store";
 import { Empty, Img } from "../components/ui";
 import Player from "../components/Player";
@@ -87,18 +87,46 @@ const isHtml = (s: string) => /<(p|div|br|img|h[1-6]|ul|ol|li|blockquote|span|st
 
 /* ================= 吃瓜详情（网页式浏览） ================= */
 export function PostDetail({ id, onBack }: { id: number; onBack: () => void }) {
-  const { toast } = useStore();
   const [post, setPost] = useState<(Post & { content?: string; video_url?: string }) | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [play, setPlay] = useState(false);
+  const [videos, setVideos] = useState<PostPlayInfo["videos"] | null>(null);
+  const [videoSrc, setVideoSrc] = useState("");
+  const [videoIndex, setVideoIndex] = useState<number | null>(null);
+  const [videoError, setVideoError] = useState("");
+  const [videoLoading, setVideoLoading] = useState(false);
+  const videoRequest = useRef(0);
 
   useEffect(() => {
     let alive = true;
+    const request = ++videoRequest.current;
+    setPost(null); setErr(null); setVideos(null); setVideoSrc(""); setVideoIndex(null); setVideoError("");
     api.post(id)
       .then((p) => { if (alive) setPost(p); })
       .catch((e) => { if (alive) setErr((e as Error).message || "加载失败"); });
-    return () => { alive = false; };
+    api.postPlay(id)
+      .then((info) => { if (alive && request === videoRequest.current) setVideos(info.videos); })
+      .catch((e) => { if (alive && request === videoRequest.current) setVideoError((e as Error).message || "视频信息加载失败"); });
+    return () => { alive = false; videoRequest.current++; };
   }, [id]);
+
+  const startVideo = async (index: number | null) => {
+    const request = ++videoRequest.current;
+    setVideoSrc(""); setVideoError(""); setVideoLoading(true);
+    try {
+      // 播放地址有时效，点击播放或切换视频时重新获取。
+      const info = await api.postPlay(id);
+      if (request !== videoRequest.current) return;
+      setVideos(info.videos);
+      const selected = index === null ? info.videos[0] : info.videos.find((video) => video.index === index);
+      if (!selected) throw new Error("该帖子没有可播放的视频");
+      setVideoIndex(selected.index);
+      setVideoSrc(selected.url);
+    } catch (e) {
+      if (request === videoRequest.current) setVideoError((e as Error).message || "视频加载失败");
+    } finally {
+      if (request === videoRequest.current) setVideoLoading(false);
+    }
+  };
 
   return (
     <div className="absolute inset-0 bg-bg flex flex-col">
@@ -115,19 +143,41 @@ export function PostDetail({ id, onBack }: { id: number; onBack: () => void }) {
         ) : (
           <>
             <div className="relative w-full bg-black" style={{ height: "min(40vh, 360px)" }}>
-              {play && post.video_url ? (
-                <Player src={post.video_url} poster={cover(post.cover)} autoPlay controls className="w-full h-full" />
+              {videoSrc ? (
+                <Player src={videoSrc} poster={cover(post.cover)} autoPlay controls className="w-full h-full" onError={setVideoError} />
               ) : (
-                <button onClick={() => { if (post.video_url) setPlay(true); else toast("该帖子没有视频", "info"); }} className="absolute inset-0">
+                <div className="absolute inset-0">
                   <Img src={post.cover} eager />
-                  <span className="absolute inset-0 flex items-center justify-center">
-                    <span className="w-14 h-14 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center elev-2">
-                      <IPlayF size={24} className="text-white ml-0.5" />
-                    </span>
-                  </span>
-                </button>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {videoLoading || (videos === null && !videoError) ? (
+                      <div className="w-8 h-8 spinner" />
+                    ) : videoError ? (
+                      <button onClick={() => startVideo(videoIndex)} className="rounded-lg bg-black/70 px-4 py-2 text-sm text-white">视频加载失败，点击重试</button>
+                    ) : videos?.length ? (
+                      <button onClick={() => startVideo(null)} aria-label="播放帖子视频" className="w-14 h-14 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center elev-2">
+                        <IPlayF size={24} className="text-white ml-0.5" />
+                      </button>
+                    ) : (
+                      <span className="rounded-lg bg-black/50 px-3 py-1 text-xs text-white/80">图文内容</span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {videoSrc && videoError && (
+                <button onClick={() => startVideo(videoIndex)} className="absolute inset-0 z-30 bg-black/60 text-sm text-white">视频加载失败，点击重试</button>
               )}
             </div>
+            {videos && videos.length > 1 && (
+              <div className="flex gap-2 overflow-x-auto px-4 pt-3">
+                {videos.map((video, i) => (
+                  <button key={video.index} onClick={() => startVideo(video.index)} disabled={videoLoading}
+                    aria-pressed={videoIndex === video.index}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs ${videoIndex === video.index ? "bg-primary text-white" : "bg-s2 text-on"}`}>
+                    视频 {i + 1}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="px-4 pt-3.5">
               <h1 className="text-[17px] font-bold text-on leading-snug">{post.title}</h1>
               <div className="flex items-center gap-2 mt-2 text-[10.5px] text-mut">

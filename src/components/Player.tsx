@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { fmtTime, playlist } from "../api";
+import { fmtTime, mediaUrl } from "../api";
 import { ICompress, IExpand, IPauseF, IPlayF, IVol, IVolMute } from "../icons";
 
 type Props = {
@@ -11,6 +11,7 @@ type Props = {
   loop?: boolean;
   onEnded?: () => void;
   onPlaying?: () => void;
+  onError?: (message: string) => void;
   onTogglePlay?: (playing: boolean) => void;
   onToggleMute?: () => void;
   controls?: boolean;
@@ -18,7 +19,7 @@ type Props = {
 };
 
 export default function Player({
-  src, poster, autoPlay, muted = false, loop = false, onEnded, onPlaying,
+  src, poster, autoPlay, muted = false, loop = false, onEnded, onPlaying, onError,
   onTogglePlay, onToggleMute, controls = true, className = "",
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -35,11 +36,13 @@ export default function Player({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
-    const url = playlist(src);
+    const url = mediaUrl(src);
+    const useHls = !url.includes("/seg?u=");
+    setErrMsg("");
 
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
 
-    if (Hls.isSupported()) {
+    if (useHls && Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
@@ -60,6 +63,7 @@ export default function Player({
         const detail = `${data.type}/${data.details}/${data.response?.code ?? ""}/${String(data.reason ?? "").slice(0, 80)}`;
         (window as unknown as { __hlsErr?: string }).__hlsErr = detail;
         setErrMsg(detail);
+        onError?.("视频加载失败，请重试");
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
         else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
         else { hls.destroy(); hlsRef.current = null; }
@@ -132,6 +136,7 @@ export default function Player({
         onPause={() => { setPlaying(false); onTogglePlay?.(false); }}
         onWaiting={() => setWaiting(true)}
         onPlaying={() => { setWaiting(false); onPlaying?.(); }}
+        onError={() => { setWaiting(false); onError?.("视频加载失败，请重试"); }}
         onTimeUpdate={(e) => setTime((e.target as HTMLVideoElement).currentTime)}
         onLoadedMetadata={(e) => setDuration((e.target as HTMLVideoElement).duration || 0)}
         onEnded={() => onEnded?.()}

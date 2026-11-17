@@ -44,6 +44,7 @@ pub fn run() {
             api::cache_clear,
             api::api_posts,
             api::api_post,
+            api::api_post_play,
             api::api_post_like,
             api::api_post_collect,
             api::api_post_comments,

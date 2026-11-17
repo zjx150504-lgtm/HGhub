@@ -39,7 +39,8 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const [index, setIndex] = useState(startIndex);
   const [epMap, setEpMap] = useState<Record<number, number>>({});
   const [details, setDetails] = useState<Record<number, Detail>>({});
-  const [playUrls, setPlayUrls] = useState<Record<string, string>>({});
+  const [playback, setPlayback] = useState<{ key: string; url: string } | null>(null);
+  const [playAttempt, setPlayAttempt] = useState(0);
   const [cards, setCards] = useState<Record<number, VideoCard>>({});
   const [posts, setPosts] = useState<Record<number, Post>>({});
 
@@ -97,7 +98,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const detail = details[curId];
   const curEp = epMap[curId] || 1;
   const playKey = `${curId}:${curEp}`;
-  const playUrl = playUrls[playKey] || "";
+  const playUrl = playback?.key === playKey ? playback.url : "";
   const episodes = detail?.episodes || [];
   const post = posts[curId];
 
@@ -131,7 +132,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
       };
 
   const posterUrl = cover(meta.cover, 900);
-  const hasVideo = kind === "video" || !!post?.video_url;
+  const hasVideo = kind === "video" || !!playUrl;
   const articleHtml = kind === "post" && !hasVideo ? sanitizeHtml(post?.content || "") : "";
 
   /* 倍速：长按 / 锁定 → 2.0x，否则用基准倍速 */
@@ -195,20 +196,29 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
 
   /* 拉播放地址 */
   useEffect(() => {
-    if (!curId) return;
-    if (playUrls[playKey]) return;
+    if (!curId) {
+      setPlayback(null);
+      return;
+    }
     let alive = true;
-    api.play(curId, curEp)
-      .then((info) => {
+    setPlayback(null);
+    setErr("");
+    setWaiting(true);
+    const request = kind === "post"
+      ? api.postPlay(curId).then((info) => info.videos[0]?.url || "")
+      : api.play(curId, curEp).then((info) => info.video_url);
+    request
+      .then((url) => {
         if (!alive) return;
-        if (!info?.video_url) throw new Error("暂无播放地址");
-        setPlayUrls((m) => ({ ...m, [playKey]: info.video_url }));
-        addHistory(curId);
+        if (!url && kind === "post") { setWaiting(false); return; }
+        if (!url) throw new Error("暂无播放地址");
+        setPlayback({ key: playKey, url });
+        if (kind === "video") addHistory(curId);
       })
       .catch((e) => { if (alive) setErr((e as Error).message || "取播放地址失败"); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curId, curEp]);
+  }, [curId, curEp, kind, playAttempt]);
 
   /* 切换条目/集数时重置播放状态 */
   useEffect(() => {
@@ -419,7 +429,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     } catch { toast("画中画开启失败", "info"); }
   };
 
-  const requireLogin = () => { if (!user) { setLoginOpen(true); return false; } return true; };
+  const requireLogin = () => { if (platform === "android") return false; if (!user) { setLoginOpen(true); return false; } return true; };
 
   const onLike = () => {
     if (!curId) return;
@@ -498,7 +508,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
               )}
 
               {/* 图文帖：没有视频就给个正文入口 */}
-              {isActive && kind === "post" && !!post && !post.video_url && (
+              {isActive && kind === "post" && !!post && !playUrl && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center">
                   <button type="button" onClick={() => setPanel("article")}
                     className="flex items-center gap-2 h-11 px-5 rounded-full bg-white/92 text-[#0b0e15] text-[13.5px] font-semibold pressable elev-3">
@@ -547,7 +557,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                   </div>
                 )}
                 {!isDesktop && (
-                  <button onClick={onFollow} className="flex flex-col items-center gap-1 pressable">
+                  <button onClick={onFollow} aria-label={store.follows.includes(meta.authorId) ? "取消关注" : "关注"} className="flex flex-col items-center gap-1 pressable">
                     <span className="relative">
                       <Avatar size={44} name={meta.author} hue={220} />
                       <span className={`absolute -bottom-0.5 -right-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center text-[10px] ${store.follows.includes(meta.authorId) ? "bg-s4 text-mut" : "bg-primary text-on-primary"}`}>
@@ -560,19 +570,19 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
 
                 {kind === "video" && (
                   <>
-                    <button onClick={onLike} className="flex flex-col items-center gap-1 pressable" aria-pressed={isLiked(curId)}>
+                    <button onClick={onLike} aria-label={isLiked(curId) ? "取消喜欢" : "喜欢"} className="flex flex-col items-center gap-1 pressable" aria-pressed={isLiked(curId)}>
                       <span key={heartBurst} className={heartBurst ? "a-pop" : ""}>
                         {isLiked(curId) ? <IHeartF size={30} className="text-neon" /> : <IHeart size={30} className="text-white tsh" />}
                       </span>
                       <span className="text-[10.5px] text-white/90 tabular-nums">{fmt(likeCount)}</span>
                     </button>
 
-                    <button onClick={() => setPanel("comments")} className="flex flex-col items-center gap-1 pressable">
+                    <button onClick={() => setPanel("comments")} aria-label="查看评论" className="flex flex-col items-center gap-1 pressable">
                       <ICommentF size={27} className="text-white tsh" />
                       <span className="text-[10.5px] text-white/90 tabular-nums">{fmt(meta.comment)}</span>
                     </button>
 
-                    <button onClick={onFav} className="flex flex-col items-center gap-1 pressable" aria-pressed={isFav(curId)}>
+                    <button onClick={onFav} aria-label={isFav(curId) ? "取消收藏" : "收藏"} className="flex flex-col items-center gap-1 pressable" aria-pressed={isFav(curId)}>
                       {isFav(curId) ? <IStarF size={27} className="text-amber" /> : <IStar size={27} className="text-white tsh" />}
                       <span className="text-[10.5px] text-white/90 tabular-nums">{fmt(meta.collect)}</span>
                     </button>
@@ -650,7 +660,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                   <div className="bg-black/70 rounded-xl p-5 flex flex-col items-center gap-3 text-[13px] text-white/90">
                     <span>视频暂时无法加载</span>
                     <span className="text-[10.5px] text-white/45 max-w-[240px] text-center break-all">{err}</span>
-                    <button className="text-primary text-[12.5px]" onClick={() => { setErr(""); setWaiting(true); videoRef.current?.play(); }}>重试</button>
+                    <button className="text-primary text-[12.5px]" onClick={() => { setErr(""); setWaiting(true); setPlayAttempt((n) => n + 1); }}>重试</button>
                   </div>
                 </div>
               )}

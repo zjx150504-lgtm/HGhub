@@ -5,6 +5,7 @@ node_modules/
 # 构建产物
 dist/
 dist-ssr/
+/HGhub-Android.apk*
 src-tauri/target/
 src-tauri/gen/
 *.local

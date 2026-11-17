@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  CommentPage, Detail, Paged, PlayInfo, Post, RankItem, User, VideoCard,
+  CommentPage, Detail, Paged, PlayInfo, Post, PostPlayInfo, RankItem, User, VideoCard,
 } from "./types";
 
 /* ── 运行环境 ───────────────────────────────────────────── */
@@ -51,6 +51,7 @@ export const api = {
     ),
   posts: (page = 1, size = 20) => call<Paged<Post>>("api_posts", { page, size }),
   post: (id: number) => call<Post & { content?: string; video_url?: string }>("api_post", { id }),
+  postPlay: (id: number) => call<PostPlayInfo>("api_post_play", { id }),
 
   video: (id: number) => call<Detail>("api_video", { id }),
   play: (id: number, ep: number) => call<PlayInfo>("api_play", { id, ep }),

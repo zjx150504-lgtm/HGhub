@@ -55,7 +55,7 @@ export default function Profile({ wide }: { wide: boolean }) {
   };
 
   /* 未登录：登录卡片 */
-  if (!user) {
+  if (!user && platform !== "android") {
     return (
       <div className="absolute inset-0 bg-bg flex flex-col">
         <div className="shrink-0 px-4 pb-1" style={{ paddingTop: "calc(var(--sat, 0px) + 14px)" }}>
@@ -121,20 +121,36 @@ export default function Profile({ wide }: { wide: boolean }) {
       <div className="flex-1 scroll-y px-4 pt-2 pb-24">
         {/* 资料卡 */}
         <div className="rounded-(--r-lg) bg-s1 p-4 elev-1 flex items-center gap-3.5 a-rise">
-          <Avatar size={56} name={user.nickname} hue={280} ring />
-          <div className="flex-1 min-w-0">
-            <div className="text-[16px] font-bold text-on truncate">{user.nickname}</div>
-            <div className="text-[11px] text-mut mt-0.5">@{user.username} · ID {user.id}</div>
-            <div className="flex gap-3 mt-2 text-[10.5px] text-mut">
-              <span>点赞 <b className="text-on">{fmt(user.counts?.like)}</b></span>
-              <span>收藏 <b className="text-on">{fmt(user.counts?.collect)}</b></span>
-              <span>关注 <b className="text-on">{fmt(user.counts?.following)}</b></span>
-            </div>
-          </div>
-          <button onClick={async () => { await logout(); }}
-            className="w-9 h-9 rounded-full bg-s3 flex items-center justify-center text-mut pressable" aria-label="退出登录">
-            <ILogout size={17} />
-          </button>
+          {platform === "android" ? (
+            <>
+              <Avatar size={56} icon={<IUser size={25} />} hue={280} ring />
+              <div className="flex-1 min-w-0">
+                <div className="text-[16px] font-bold text-on">我的空间</div>
+                <div className="text-[11px] text-mut mt-1">收藏与观看记录保存在本机</div>
+                <div className="flex gap-3 mt-2 text-[10.5px] text-mut">
+                  <span>收藏 <b className="text-on">{favs.length}</b></span>
+                  <span>观看记录 <b className="text-on">{history.length}</b></span>
+                </div>
+              </div>
+            </>
+          ) : user && (
+            <>
+              <Avatar size={56} name={user.nickname} hue={280} ring />
+              <div className="flex-1 min-w-0">
+                <div className="text-[16px] font-bold text-on truncate">{user.nickname}</div>
+                <div className="text-[11px] text-mut mt-0.5">@{user.username} · ID {user.id}</div>
+                <div className="flex gap-3 mt-2 text-[10.5px] text-mut">
+                  <span>点赞 <b className="text-on">{fmt(user.counts?.like)}</b></span>
+                  <span>收藏 <b className="text-on">{fmt(user.counts?.collect)}</b></span>
+                  <span>关注 <b className="text-on">{fmt(user.counts?.following)}</b></span>
+                </div>
+              </div>
+              <button onClick={async () => { await logout(); }}
+                className="w-9 h-9 rounded-full bg-s3 flex items-center justify-center text-mut pressable" aria-label="退出登录">
+                <ILogout size={17} />
+              </button>
+            </>
+          )}
         </div>
 
         {/* 我的内容 */}
@@ -256,7 +272,7 @@ export default function Profile({ wide }: { wide: boolean }) {
           <div className="p-5">
             <div className="text-[14.5px] font-bold text-on">清理缓存</div>
             <p className="text-[12px] text-mut leading-relaxed mt-2">
-              将清除封面与播放列表缓存、喜欢与收藏标记、观看历史和搜索历史。账号登录状态会保留。
+              将清除封面与播放列表缓存、喜欢与收藏标记、观看历史和搜索历史。{platform !== "android" && "账号登录状态会保留。"}
             </p>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setClearOpen(false)} className="flex-1 h-9 rounded-(--r-ctl) bg-s3 text-[12.5px] text-on/80 pressable">取消</button>

@@ -146,7 +146,14 @@ pub async fn load_playlist(url: &str, prefix: &str) -> Result<Arc<String>, Strin
     }
     let (_, bytes) = fetch_bytes(url).await?;
     let text = String::from_utf8_lossy(&bytes).to_string();
+    let out = rewrite_playlist(&text, url, prefix);
 
+    let arc = Arc::new(out);
+    cache_put(&PL_CACHE, url.to_string(), arc.clone(), PL_CACHE_MAX);
+    Ok(arc)
+}
+
+fn rewrite_playlist(text: &str, url: &str, prefix: &str) -> String {
     let mut out = String::with_capacity(text.len() + 512);
     for raw in text.lines() {
         let line = raw.trim_end();
@@ -169,9 +176,7 @@ pub async fn load_playlist(url: &str, prefix: &str) -> Result<Arc<String>, Strin
         out.push('\n');
     }
 
-    let arc = Arc::new(out);
-    cache_put(&PL_CACHE, url.to_string(), arc.clone(), PL_CACHE_MAX);
-    Ok(arc)
+    out
 }
 
 fn absolutize_uri_in_attr(base: &str, line: &str) -> String {
@@ -255,15 +260,15 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "requires the live upstream site and media CDN"]
     async fn live_play_chain() {
         use crate::net::edge;
-        let play = edge("GET", "/api/videos/117/play?ep=3&page_texts=0", None, None).await
+        let play = edge("POST", "/api/videos/117/episodes/3/playback", Some(serde_json::json!({})), None).await
             .expect("play api");
-        let url = play["video_url"].as_str().expect("video_url").to_string();
-        println!("play url: {}", &url[..url.len().min(90)]);
+        let url = play["streams"]["main"].as_str().filter(|url| !url.is_empty()).expect("play url").to_string();
         let (_, bytes) = fetch_bytes(&url).await.expect("fetch playlist");
         let text = String::from_utf8_lossy(&bytes);
-        println!("raw playlist len={} head={}", text.len(), &text[..text.len().min(160)]);
+        assert!(text.starts_with("#EXTM3U"));
         let q = format!("u={}", enc(&url));
         let resp = handle("/hls", &q, "http").await;
         let body = String::from_utf8_lossy(resp.body()).to_string();
@@ -273,7 +278,6 @@ mod tests {
         let seg_line = body.lines()
             .find(|l| !l.starts_with('#') && l.contains("/seg?u="))
             .expect("seg line").to_string();
-        println!("seg line: {}", &seg_line[..seg_line.len().min(120)]);
         let seg_q = seg_line.split("?u=").nth(1).unwrap();
         let seg = handle("/seg", &format!("u={seg_q}"), "http").await;
         println!("segment status={} len={}", seg.status(), seg.body().len());
@@ -281,27 +285,34 @@ mod tests {
         assert!(seg.body().len() > 1000);
     }
 
-    #[tokio::test]
-    async fn playlist_rewrite_works() {
-        let m3u8 = "https://yd-lphu-hls.hzjvlo.cn/videos5/247f3c9862e8e1537ade0b20c45ac962/247f3c9862e8e1537ade0b20c45ac962.m3u8?auth_key=1793700503-0-0-b9575bb11258cf40cd5499c052fc5820&v=3&time=0&via=hgdj&via_bm=dx";
-        let q = format!("u={}", enc(m3u8));
-        let resp = handle("/hls", &q, "http").await;
-        let body = String::from_utf8_lossy(resp.body()).to_string();
-        println!("status={} len={}", resp.status(), body.len());
-        println!("--- head ---\n{}", &body[..body.len().min(600)]);
-        assert!(body.contains("#EXTM3U"), "not a playlist: {body}");
-        assert!(body.contains("hg.localhost/seg?u="), "segments not rewritten");
+    #[test]
+    fn playlist_rewrite_works() {
+        let input = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"../keys/crypt.key?e=1\"\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:3,\nsegment.ts?foo=1&bar=2\n";
+        let output = rewrite_playlist(input, "https://cdn.example.org/video/index.m3u8?auth=abc", "http://hg.localhost");
+        let target = |local: &str| {
+            let parsed = url::Url::parse(local).unwrap();
+            assert_eq!(parsed.host_str(), Some("hg.localhost"));
+            assert_eq!(parsed.path(), "/seg");
+            parsed.query_pairs().find(|(key, _)| key == "u").unwrap().1.into_owned()
+        };
+        let mut lines = output.lines();
+        assert_eq!(lines.next(), Some("#EXTM3U"));
+        let key = lines.next().unwrap().split('"').nth(1).unwrap();
+        assert_eq!(target(key), "https://cdn.example.org/keys/crypt.key?e=1");
+        let map = lines.next().unwrap().split('"').nth(1).unwrap();
+        assert_eq!(target(map), "https://cdn.example.org/video/init.mp4");
+        assert_eq!(lines.next(), Some("#EXTINF:3,"));
+        assert_eq!(target(lines.next().unwrap()), "https://cdn.example.org/video/segment.ts?foo=1&bar=2");
     }
 
-    #[tokio::test]
-    async fn cover_decrypt_works() {
-        let url = "https://pic.drleao.cn/upload_01/upload/20261029/2026102918545028336.jpg?auth_key=1793707703-0-0-1cbd9389b0b69141dd741f16bb71397a";
-        match load_image(url).await {
-            Ok((kind, bytes)) => {
-                println!("kind={kind} len={}", bytes.len());
-                assert!(kind.starts_with("image/"));
-            }
-            Err(e) => panic!("image failed: {e}"),
-        }
+    #[test]
+    fn cover_decrypt_works() {
+        let cipher = [
+            0xdd, 0xe2, 0x8c, 0x47, 0x4c, 0x27, 0x2d, 0x2d, 0xf8, 0xbd, 0xb2, 0xbe, 0x6b, 0xb4, 0x58, 0x3b,
+            0x63, 0x3b, 0x55, 0x74, 0x88, 0x67, 0xda, 0xdd, 0xf9, 0x17, 0xdb, 0xf7, 0xdf, 0xe2, 0x05, 0xb8,
+        ];
+        let plain = strip_padding(aes_cbc_decrypt(&cipher).unwrap());
+        assert_eq!(plain, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+        assert_eq!(image_kind(&plain), Some("image/png"));
     }
 }
